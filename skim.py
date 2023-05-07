@@ -99,54 +99,6 @@ def run_inference(model, rng_key, X, Y, hypers, num_warmup, num_samples, num_cha
 # %% [markdown]
 # # Prepare Data
 
-# %% [markdown]
-# ## Artificial
-
-# %%
-def get_data(N=20, S=2, P=10, sigma_obs=0.05):
-    """
-    Create artificial regression dataset where only S out of P feature dimensions
-    contain signal and where there is a single pairwise interaction between the first
-    and second dimensions.
-    """
-    assert S < P and P > 1 and S > 0
-    np.random.seed(0)
-
-    X = np.random.randn(N, P)
-    # generate S coefficients with non-negligible magnitude
-    W = 0.5 + 2.5 * np.random.rand(S)
-    # generate data using the S coefficients and a single pairwise interaction
-    Y = (
-        np.sum(X[:, 0:S] * W, axis=-1)
-        + X[:, 0] * X[:, 1]
-        + sigma_obs * np.random.randn(N)
-    )
-    Y -= jnp.mean(Y)
-    Y_std = jnp.std(Y)
-
-    assert X.shape == (N, P)
-    assert Y.shape == (N,)
-
-    return X, Y / Y_std, W / Y_std, 1.0 / Y_std
-
-# %%
-num_data = 100
-num_dimensions = 20
-num_active = 3
-
-X, Y, expected_thetas, expected_pairwise = get_data(
-    N=num_data, P=num_dimensions, S=num_active
-)
-
-# %%
-print(f"Shape of X: {X.shape}")
-print(f"Shape of Y: {Y.shape}")
-print(f"Expected Thetas: {expected_thetas}")
-print(f"Expected Pairwise: {expected_pairwise}")
-
-# %% [markdown]
-# ## Real
-
 # %%
 def is_relevant_chromosome(chromosome):
     # Try running on all chromosomes, but uncomment other line if runtime is too long.
@@ -233,8 +185,8 @@ num_dimensions = X.shape[1]
 num_active = 10
 num_samples = 1000
 num_warmup = 500
-num_chains = jax.device_count()
 device = xla_bridge.get_backend().platform
+num_chains = jax.device_count() if device == "gpu" else 1
 
 print(f"Running {num_chains} chains on {device}")
 numpyro.set_host_device_count(num_chains)
