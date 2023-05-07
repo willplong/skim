@@ -1,0 +1,33 @@
+#how to slurm 
+#log into spock: 
+
+ssh username@spock.princeton.edu 
+
+#have files uploaded into the same place as everything else. 
+#make sure you have environment set up inside spock. while files in scotty are also accessable in spock, environments are not 
+
+conda create -n sml505 numpy numpyro matplotlib scikit-learn jax 
+
+#please open and change a few things on the .sh file before proceeding. these idepending on if you're running a test or the final things
+#add more cpus 
+#add more memory per cpu 
+#however long you think you need and add 30min to an hour.
+#DO NOT max it out because your priority will be shot 
+
+#also change your email so that when everything is done runnning, you'll get an email. full output log files will be created automatically wherever you set up your output = <directory/filename>
+#what it should currently look like
+
+#SBATCH --cpus-per-task=12
+#SBATCH --mem-per-cpu=10G
+#SBATCH --contiguous
+#SBATCH --time=0:30:00
+#SBATCH --output=logs/%u_%x_%A.out
+#SBATCH --mail-user=sy9959@princeton.edu
+#SBATCH --mail-type=END
+
+#also change the file directory of the .py within the .sh file, because its currently pulling mine that i put into witten cup.
+
+python /jukebox/witten/Sae/to_delete/skim.py 
+
+#also check that the .py file looks correct
+#okay glhf. if nothing it working via the environment step, just make conda-forge the priority and it should fix everything. 
