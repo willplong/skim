@@ -1,8 +1,12 @@
+# %%
 import csv
+import datetime
 import itertools
 import os
+import pickle
 import time
 
+import jax
 import jax.numpy as jnp
 import jax.random as random
 import matplotlib.pyplot as plt
@@ -10,10 +14,28 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax import vmap
+from jax.lib import xla_bridge
 from jax.scipy.linalg import cho_factor, cho_solve, solve_triangular
 from numpyro.infer import MCMC, NUTS
-from sklearn.feature_selection import VarianceThreshold, SelectKBest
+from sklearn.feature_selection import SelectKBest, VarianceThreshold
 
+# %% [markdown]
+# # Define Sparse Regression Model
+# 
+# We demonstrate how to do (fully Bayesian) sparse linear regression using the approach described in
+# [1]. This approach is particularly suitable for situations with many feature dimensions (large P)
+# but not too many data points (small N).
+# 
+# In particular, we consider a quadratic regressor of the form:
+# 
+# $$f(X) = \text{constant} + \sum_i \theta_i X_i + \sum_{i<j} \theta_{ij} X_i X_j + \text{observation noise}$$
+#     
+# **References:**
+# 1. Raj Agrawal, Jonathan H. Huggins, Brian Trippe, Tamara Broderick (2019), "The Kernel Interaction
+#    Trick: Fast Bayesian Discovery of Pairwise Interactions in High Dimensions",
+#    (https://arxiv.org/abs/1905.06501)
+
+# %%
 def dot(X, Z):
     return jnp.dot(X, Z[..., None])[..., 0]
 
@@ -74,6 +96,13 @@ def run_inference(model, rng_key, X, Y, hypers, num_warmup, num_samples, num_cha
     print("\nMCMC elapsed time:", time.time() - start)
     return mcmc.get_samples()
 
+# %% [markdown]
+# # Prepare Data
+
+# %% [markdown]
+# ## Artificial
+
+# %%
 def get_data(N=20, S=2, P=10, sigma_obs=0.05):
     """
     Create artificial regression dataset where only S out of P feature dimensions
@@ -100,6 +129,7 @@ def get_data(N=20, S=2, P=10, sigma_obs=0.05):
 
     return X, Y / Y_std, W / Y_std, 1.0 / Y_std
 
+# %%
 num_data = 100
 num_dimensions = 20
 num_active = 3
@@ -108,11 +138,16 @@ X, Y, expected_thetas, expected_pairwise = get_data(
     N=num_data, P=num_dimensions, S=num_active
 )
 
+# %%
 print(f"Shape of X: {X.shape}")
 print(f"Shape of Y: {Y.shape}")
 print(f"Expected Thetas: {expected_thetas}")
 print(f"Expected Pairwise: {expected_pairwise}")
 
+# %% [markdown]
+# ## Real
+
+# %%
 def is_relevant_chromosome(chromosome):
     # Try running on all chromosomes, but uncomment other line if runtime is too long.
     return True
@@ -161,9 +196,9 @@ with open("data/fpkm_table_normalized.csv", "r") as f:
 print("Shape of X: ", X.shape)
 print("Shape of Y: ", Y.shape)
 
-num_features = 1000
-num_active = 50
+# %%
 var_thresh = 0.05
+num_select = 100
 
 variances = np.var(X, axis=0)
 print(f"# Genes with Variance > {var_thresh}: ", np.sum(variances > var_thresh))
@@ -175,28 +210,35 @@ ax.set_xlabel("Variance")
 ax.set_ylabel("Frequency")
 plt.show()
 
+# %%
 variance_selector = VarianceThreshold(var_thresh)
 X = variance_selector.fit_transform(X)
 selected_indices = variance_selector.get_support(indices=True)
 gene_symbols = gene_symbols[selected_indices]
 
 # TODO: Should we be using a different feature selection method?
-select_k_best = SelectKBest(k=num_features)
+select_k_best = SelectKBest(k=num_select)
 X = select_k_best.fit_transform(X, Y)
 selected_indices = select_k_best.get_support(indices=True)
 gene_symbols = gene_symbols[selected_indices]
 
 print("Shape of X: ", X.shape)
 
+# %% [markdown]
+# # Run Model
+
+# %%
 num_data = X.shape[0]
 num_dimensions = X.shape[1]
+num_active = 10
 num_samples = 1000
 num_warmup = 500
-num_chains = 1
-device = "cpu"
+num_chains = jax.device_count()
+device = xla_bridge.get_backend().platform
 
-numpyro.set_platform(device)
+print(f"Running {num_chains} chains on {device}")
 numpyro.set_host_device_count(num_chains)
+numpyro.set_platform(device)
 
 hypers = {
     "expected_sparsity": num_active,
@@ -213,6 +255,17 @@ samples = run_inference(
     model, rng_key, X, Y, hypers, num_warmup, num_samples, num_chains
 )
 
+# %%
+date = datetime.datetime.now().strftime("%m%d-%H%M%S")
+with open(f"out/mcmc-{date}.pkl", "wb") as f:
+    pickle.dump(samples, f)
+with open(f"out/genes-{date}.pkl", "wb") as f:
+    pickle.dump(gene_symbols, f)
+
+# %% [markdown]
+# # Interpret Results
+
+# %%
 # Compute the mean and variance of coefficient theta_i (where i = dimension) for a
 # MCMC sample of the kernel hyperparameters (eta1, xisq, ...).
 # Compare to theorem 5.1 in reference [1].
@@ -380,10 +433,12 @@ def analyze_pair_of_dimensions(samples, X, Y, dim1, dim2, hypers):
     std = jnp.sqrt(variance)
     return mean, std
 
+# %%
 # compute the mean and square root variance of each coefficient theta_i
 dims = jnp.arange(num_dimensions)
 means, stds = vmap(lambda dim: analyze_dimension(samples, X, Y, dim, hypers))(dims)
 
+# %%
 active_dimensions = []
 for dim, (mean, std) in enumerate(zip(means, stds)):
     # mark dimension inactive if interval [mean +/- 3 * std] contains zero
@@ -426,3 +481,8 @@ if len(active_dimensions) > 0:
         samples["sigma"][-1],
     )
     print("Single posterior sample theta:\n", thetas)
+
+# %%
+
+
+
