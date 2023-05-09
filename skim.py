@@ -102,8 +102,8 @@ def run_inference(model, rng_key, X, Y, hypers, num_warmup, num_samples, num_cha
 # %%
 def is_relevant_chromosome(chromosome):
     # Try running on all chromosomes, but uncomment other line if runtime is too long.
-    return True
-    # return chromosome in ["1", "14", "17", "21"]
+    # return True
+    return chromosome in ["1", "14", "17", "21"]
 
 donor_braak_dict = {}
 with open("data/donor-info.csv", "r") as f:
@@ -131,7 +131,8 @@ with open("data/fpkm_table_normalized.csv", "r") as f:
     rnaseq_profiles = header[1:]
     donors = [rnaseq_donor_dict[profile] for profile in rnaseq_profiles]
     braak_scores = [donor_braak_dict[donor] for donor in donors]
-    Y = np.array(braak_scores)
+    Y = np.array(braak_scores, dtype=float)
+    Y -= Y.mean()
 
     X = []
     gene_symbols = []
@@ -150,7 +151,7 @@ print("Shape of Y: ", Y.shape)
 
 # %%
 var_thresh = 0.05
-num_select = 100
+num_select = 1000
 
 variances = np.var(X, axis=0)
 print(f"# Genes with Variance > {var_thresh}: ", np.sum(variances > var_thresh))
@@ -169,6 +170,8 @@ selected_indices = variance_selector.get_support(indices=True)
 gene_symbols = gene_symbols[selected_indices]
 
 # TODO: Should we be using a different feature selection method?
+X -= X.mean(axis=0)
+X /= X.std(axis=0)
 select_k_best = SelectKBest(k=num_select)
 X = select_k_best.fit_transform(X, Y)
 selected_indices = select_k_best.get_support(indices=True)
@@ -186,11 +189,14 @@ num_active = 10
 num_samples = 1000
 num_warmup = 500
 device = xla_bridge.get_backend().platform
-num_chains = jax.device_count() if device == "gpu" else 1
+if device == "gpu":
+    num_chains = jax.device_count()
+else:
+    num_chains = 1
 
 print(f"Running {num_chains} chains on {device}")
-numpyro.set_host_device_count(num_chains)
 numpyro.set_platform(device)
+numpyro.set_host_device_count(num_chains)
 
 hypers = {
     "expected_sparsity": num_active,
